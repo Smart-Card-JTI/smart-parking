@@ -3,11 +3,21 @@
 #include <LiquidCrystal_I2C.h>
 #include <PN532_HSU.h>
 #include <PN532.h>
+#include <SPI.h>
+#include "LedMatrix.h"
 
 #define Blink_interval  1000
-#define Blink_interval_heart  300
+#define Blink_interval_heart  100
 #define RXD2 16
 #define TXD2 17
+
+#define NUMBER_OF_DEVICES 4 //number of led matrix connect in series
+#define CS_PIN 15
+#define CLK_PIN 14
+#define MISO_PIN 2 //we do not use this pin just fill to match constructor
+#define MOSI_PIN 12
+
+LedMatrix ledMatrix = LedMatrix(NUMBER_OF_DEVICES, CLK_PIN, MISO_PIN, MOSI_PIN, CS_PIN);
 
 PN532_HSU pn532hsu(Serial2);
 PN532 nfc(pn532hsu);
@@ -24,10 +34,13 @@ const long  gmtOffset_sec = 7 * 60 * 60; // UTC+7
 const int   daylightOffset_sec = 3600;
 
 //display
-const String title = "Smart Parking Polinema";
+const String title = "Smart Parking";
 
 //deklarasi LCD
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+//deklarasi task
+TaskHandle_t Task2;
 
 // Make custom characters:
 byte Heart[] = {
@@ -72,6 +85,15 @@ void setupReader() {
   delay(1000);
 }
 
+void setupRunningText() {
+  clearMessage("Init LED...");
+  ledMatrix.init();
+  ledMatrix.setText("Politeknik Negeri Malang");
+  ledMatrix.setAlternateDisplayOrientation(1);
+  clearMessage("Init Berhasil...");
+  delay(1000);
+}
+
 void printLocalTime() {
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
@@ -79,7 +101,8 @@ void printLocalTime() {
     return;
   }
 
-  scrollText(0, title, 400, 16);
+  //  scrollText(0, title, 400, 16);
+  lcd.print(title);
 
   lcd.setCursor(0, 1);
   char timeStringBuff[50]; //50 chars should be enough
@@ -140,8 +163,7 @@ void displayHeart() {
   lcd.write(0);
 }
 
-void setup()
-{
+void setup() {
 
   //setup lcd
   lcd.init();
@@ -163,6 +185,8 @@ void setup()
 
   setupReader();
 
+  setupRunningText();
+
   lcd.clear();
 
   //init and get the time
@@ -173,13 +197,38 @@ void setup()
   //disconnect WiFi as it's no longer needed
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
+
+  //create a task that will be executed in the Task2code() function, with priority 1 and executed on core 1
+  xTaskCreatePinnedToCore(
+    Task2code,   /* Task function. */
+    "Task2",     /* name of task. */
+    10000,       /* Stack size of task */
+    NULL,        /* parameter of the task */
+    1,           /* priority of the task */
+    &Task2,      /* Task handle to keep track of created task */
+    1);          /* pin task to core 1 */
+  delay(500);
+}
+
+//Task2code: blinks an LED every 700 ms
+void Task2code( void * pvParameters ) {
+  Serial.print("Task2 running on core ");
+  Serial.println(xPortGetCoreID());
+
+  for (;;) {
+    //running-text
+    ledMatrix.clear();
+    ledMatrix.scrollTextLeft();
+    ledMatrix.drawText();
+    ledMatrix.commit();
+    delay(100);
+  }
 }
 
 void loop()
 {
   readCard();
-  delay(500);
-  printLocalTime();
+  delay(250);
 }
 
 // Function to scroll text
@@ -259,6 +308,8 @@ void readCard() {
 
           // Wait a bit before reading the card again
           delay(1000);
+          lcd.clear();
+          lcd.setCursor(0, 0);
         }
         else
         {
@@ -295,4 +346,5 @@ void readCard() {
       }
     }
   }
+  printLocalTime();
 }
